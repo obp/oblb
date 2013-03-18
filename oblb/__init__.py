@@ -20,55 +20,70 @@ class Socket:
     def wants_exception(self):
         pass
 
-    def read_ready(self, items):
-        print "Read ready", self
+    def read_ready(self):
+        pass
 
-    def write_ready(self, items):
-        print "Write ready", self
+    def write_ready(self):
+        pass
 
-    def exection_ready(self, items):
-        print "Exception ready", self
+    def exception_ready(self):
+        pass
+
+
+class DeadConnection(Socket):
+    pass
 
 class TransportSocket(Socket):
     buffer = None
 
     def read_ready(self):
-        self.buffer = self.socket.recv(1024*1024)
-        if not self.buffer:
-            self.socket.close()
-            self.peer.socket.close()
-            self.items.remove(self)
-            self.items.remove(self.peer)
-            return 
-        bytes = self.peer.socket.send(self.buffer)
-        self.buffer = self.buffer[bytes:]
-        if not self.buffer:
-            self.buffer = None
+        print "TransportationSocket.read_Ready"
+        if not self.peer.socket:
+            return self.exception_ready()
+        try:
+            self.peer.buffer = self.socket.recv(102400)
+        except socket.error:
+            return self.exception_ready()
+        if not self.peer.buffer:
+            self.exception_ready()
 
         
     def write_ready(self):
-        if self.peer.buffer is not None:
-            if self.socket.send(self.peer.buffer):
-                self.peer.buffer = None
+
+        if self.buffer:
+            try:
+                amount = self.socket.send(self.buffer)
+            except socket.error:
+                return self.exception_ready()
+                
+            self.buffer = self.buffer[amount:]
+        elif not self.peer.socket:
+            self.exception_ready()
+            
 
     def exception_ready(self):
         self.socket.close()
-        self.peer.socket.close()
-        self.items.remove(self)
-        self.items.remove(peer)
+        self.socket = None
+        self.__class__ = DeadConnection
+        try:
+            self.items.remove(self)
+        except ValueError:
+            pass
+
     
     def wants_read(self):
-        return self.buffer is None
+        return not self.peer.buffer
 
     def wants_write(self):
-        return self.peer.buffer is not None
+        return self.buffer or not self.peer.socket
 
     def wants_exception(self):
         return True
 
 
 class Remote(TransportSocket):
-    def __init__(self, peer, target):
+    def __init__(self, peer, target, items):
+        self.items = items
         self.peer = peer
         self.target = target
         self.socket = socket.socket(
@@ -76,13 +91,13 @@ class Remote(TransportSocket):
         self.host, self.port = self.target.split(':')
         self.port = int(self.port)
         self.socket.connect((self.host, self.port))
-        self.buffer = None
+        self.buffer = ""
 
 
 class VirginRemote(Remote):
     def read_ready(self, *args):
         self.__class__ = Remote
-        self.read_ready(*args2)
+        self.read_ready(*args)
     
     def write_ready(self, *args):
         self.__class__ = Remote
@@ -107,11 +122,12 @@ class Local(TransportSocket):
         if not self.targets:
             self.items.remove(self)
             return 
-        self.peer = Remote(self, self.targets.pop(self.counter % len(self.targets)))
-        if len(self.targets) > 1:
-            self.counter /= len(self.targets) - 1
+        target_number = self.counter % len(self.targets)
+        target = self.targets.pop(target_number)
+        self.peer = VirginRemote(self, target, self.items)
+        self.counter /= (len(self.targets) + 1)
         self.items.append(self.peer)
-        self.buffer = None
+        self.buffer = ""
 
     def pop_target(self):
         return 
@@ -128,7 +144,7 @@ class Listener(Socket):
         host, port = address.split(':')
         port = int(port)
         self.socket.bind((host, port))
-        self.socket.listen(5)
+        self.socket.listen(100)
 
     def read_ready(self):
         self.counter += 1 
@@ -172,11 +188,11 @@ def main(argv):
             [i for i in items if i.wants_write()], 
             [i for i in items if i.wants_exception()])
                 
-        for read in reads:
-            read.read_ready()
-
         for write in writes:
             write.write_ready()
+
+        for read in reads:
+            read.read_ready()
 
         for error in exceptions:
             error.exception_ready()
