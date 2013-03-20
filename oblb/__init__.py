@@ -1,6 +1,5 @@
 import collections
 import socket
-from select import select
 
 # composabable (layers of heirarchy) 
 # readable by people and programs 
@@ -37,7 +36,6 @@ class TransportSocket(Socket):
     buffer = None
 
     def read_ready(self):
-        print "TransportationSocket.read_Ready"
         if not self.peer.socket:
             return self.exception_ready()
         try:
@@ -51,11 +49,11 @@ class TransportSocket(Socket):
     def write_ready(self):
 
         if self.buffer:
+            "Ready to accept from a ", len(self.buffer), " item buffer"
             try:
                 amount = self.socket.send(self.buffer)
             except socket.error:
                 return self.exception_ready()
-                
             self.buffer = self.buffer[amount:]
         elif not self.peer.socket:
             self.exception_ready()
@@ -90,7 +88,12 @@ class Remote(TransportSocket):
             socket.AF_INET, socket.SOCK_STREAM)
         self.host, self.port = self.target.split(':')
         self.port = int(self.port)
-        self.socket.connect((self.host, self.port))
+        target = (self.host, self.port)
+        self.socket.setblocking(False)
+        try:
+            self.socket.connect(target)
+        except socket.error:
+            pass # This is acutally fine 
         self.buffer = ""
 
 
@@ -148,7 +151,9 @@ class Listener(Socket):
 
     def read_ready(self):
         self.counter += 1 
-        self.items.append(Local(self.counter, self.items, self.targets,  *self.socket.accept()))
+        acceptance = self.socket.accept()
+        acceptance[0].setblocking(False)
+        self.items.append(Local(self.counter, self.items, self.targets,  *acceptance))
 
     def exception_ready(self):
         sys.exit(1)
@@ -161,6 +166,11 @@ class Listener(Socket):
 
     def wants_exception(self):
         return True
+
+def select(*args):
+    import select
+    retval = select.select(*args)
+    return retval
 
 def main(argv):
     """Usage: oblb source_host:source_port target_host:target_port ... 
